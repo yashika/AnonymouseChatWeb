@@ -272,13 +272,76 @@ const send = async (t, text, n) => t.eval(
   check('?lang=zh&guid= 组合参数可正常自动加入',
     (await logOf(tabI)).includes('English UI message'));
 
-  // ---------------------------------------------------------- 9) 异常检查
-  console.log('\n-- 9) 页面异常 --');
-  const allErr = [main, tabB, tabC, tabD, tabE, tabF, tabG, tabH, tabI].flatMap(t => t.errors.concat(t.consoleErrors));
+  // ---------------------------------------------------------- 9) 昵称记忆
+  console.log('\n-- 9) 昵称：新设备随机 / 老设备沿用 --');
+  const nickOf = (t) => t.eval(`document.getElementById('nick').value`);
+  const clearNick = (t) => t.eval(`(function(){try{localStorage.removeItem('enc.nick');}catch(e){}` +
+    `document.cookie='enc_nick=;max-age=0;path=/';document.cookie='enc.nick=;max-age=0;path=/';return 1})()`);
+
+  await clearNick(tabI);   // 先把当前浏览器弄成「全新设备」
+
+  const tabJ = await newTab(bust(''));
+  await tabJ.waitFor(loaded, 15000, 'J 页面加载');
+  const nickJ = await nickOf(tabJ);
+  check('全新设备：打开即生成随机昵称', !!nickJ && nickJ.length >= 4, nickJ);
+  check('全新设备：日志说明已生成并记住', (await logOf(tabJ)).includes('首次在本设备打开'),
+    (await logOf(tabJ)).split('\n').slice(0, 3).join(' / '));
+
+  const tabK = await newTab(bust(''));
+  await tabK.waitFor(loaded, 15000, 'K 页面加载');
+  const nickK = await nickOf(tabK);
+  check('再次打开：一直沿用老昵称（不再随机）', nickK === nickJ, `${nickJ} vs ${nickK}`);
+  check('老设备：日志说明已恢复昵称', (await logOf(tabK)).includes('已恢复本设备此前使用的昵称'),
+    (await logOf(tabK)).split('\n').slice(0, 3).join(' / '));
+
+  await tabK.eval(`(function(){var n=document.getElementById('nick');n.value='张三';` +
+    `n.dispatchEvent(new Event('change'));return 1})()`);
+  await sleep(400);
+  check('手动改名后日志提示已记住', (await logOf(tabK)).includes('昵称已改为「张三」'));
+  const tabL = await newTab(bust(''));
+  await tabL.waitFor(loaded, 15000, 'L 页面加载');
+  check('手动改的昵称被记住并成为默认', (await nickOf(tabL)) === '张三', await nickOf(tabL));
+
+  // cookie 兜底：只清 localStorage 也应能找回（file:// 下浏览器根本不写 cookie，只在 http(s) 下验证）
+  await tabL.eval(`(function(){try{localStorage.removeItem('enc.nick');}catch(e){}return 1})()`);
+  const tabN = await newTab(bust(''));
+  await tabN.waitFor(loaded, 15000, 'N 页面加载');
+  if (FILE_URL.startsWith('http')) {
+    check('cookie 兜底：localStorage 被清后仍能找回昵称', (await nickOf(tabN)) === '张三', await nickOf(tabN));
+  } else {
+    console.log('  [SKIP] cookie 兜底 —— file:// 下浏览器不写 cookie，改用线上地址验证 (APP_URL=...)');
+  }
+
+  // 全部清空 → 视为新设备，重新随机
+  await clearNick(tabN);
+  const tabM = await newTab(bust(''));
+  await tabM.waitFor(loaded, 15000, 'M 页面加载');
+  const nickM = await nickOf(tabM);
+  check('存储被清空后重新随机出不同昵称', !!nickM && nickM !== '张三', nickM);
+
+  // 昵称真的跟着消息发出去（自己看到「我」，别人看到昵称）
+  await tabM.eval(`(function(){document.getElementById('btnConnect').click();return 1})()`);
+  await tabM.waitFor(`!!document.getElementById('guidTag')`, 25000, 'M 建房');
+  const guidM = await guidOf(tabM);
+  check('连接的房间使用的是记住的昵称', (await tabM.eval(`window.__encRoom.name`)) === nickM,
+    await tabM.eval(`window.__encRoom.name`));
+  await send(tabM, 'my nickname is remembered', 'ignored');
+  await sleep(600);
+  const tabO = await newTab(bust('guid=' + encodeURIComponent(guidM)));
+  await tabO.waitFor(loaded, 15000, 'O 页面加载');
+  await tabO.waitFor(`window.__encRoom && window.__encRoom.messages.length >= 1`, 25000, 'O 加载历史');
+  check('对方看到的是本设备记住的昵称',
+    (await logOf(tabO)).includes(nickM + '：my nickname is remembered'),
+    (await logOf(tabO)).split('\n').slice(-1)[0]);
+
+  // ---------------------------------------------------------- 10) 异常检查
+  console.log('\n-- 10) 页面异常 --');
+  const allTabs = [main, tabB, tabC, tabD, tabE, tabF, tabG, tabH, tabI, tabJ, tabK, tabL, tabN, tabM, tabO];
+  const allErr = allTabs.flatMap(t => t.errors.concat(t.consoleErrors));
   check('全部页面均无未捕获异常', allErr.length === 0, allErr.join(' | '));
 
   console.log('\n' + (failures ? `❌ ${failures} 项失败` : '✅ 全部通过'));
-  [main, tabB, tabC, tabD, tabE, tabF, tabG, tabH, tabI].forEach(t => t.close());
+  allTabs.forEach(t => t.close());
   process.exit(failures ? 1 : 0);
 })().catch((e) => {
   console.error('\n💥 测试中断:', e.message);

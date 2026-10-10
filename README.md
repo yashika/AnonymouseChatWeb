@@ -29,6 +29,7 @@ Messages travel over a **WebRTC DataChannel** — a real peer-to-peer connection
 | 🗂️ **One file** | `index.html` — no build step, no CDN, no `<script src>`, no npm install |
 | 🔌 **No backend** | Signaling runs over free public MQTT brokers; there is no server of your own to deploy |
 | 🌐 **Bilingual** | Full 中文 / English UI with a switcher, `?lang=zh` / `?lang=en`, and browser-language auto-detect |
+| 🪪 **Remembered nickname** | One random nickname per browser, created on first visit and reused forever after |
 | 🔗 **Shareable link** | `…/?guid=XXXXX` joins that room automatically |
 | 📜 **Replay** | Everyone who joins sees the **last 100 messages** |
 | 🕵️ **Pure P2P mode** | One checkbox: chat content then never touches the relay at all |
@@ -110,6 +111,22 @@ Toggle **Pure P2P** in the toolbar:
 
 Hybrid sends each message over both paths and de-duplicates by message ID, so as long as either path works,
 nothing is lost. That is the recommended default.
+
+---
+
+## Nickname
+
+The nickname box is bound to the **browser/device**, not to the room:
+
+- **First visit on a browser** → a random nickname such as `用户68e2` / `User1a3f` is generated,
+  put in the box, and remembered immediately.
+- **Every later visit** → that same nickname is restored as the default.
+- **Edit it** → saved as soon as the field loses focus, and used for the messages you send next
+  (even while you are already connected).
+- **Clear the field** → the saved nickname is forgotten, so the next visit generates a fresh one.
+
+It is written to `localStorage` **and** to a cookie, so clearing just one of them is not enough to
+lose it. Only the nickname and the chosen public node are stored — no message content, no identifiers.
 
 ---
 

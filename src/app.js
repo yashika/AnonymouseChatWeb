@@ -22,12 +22,62 @@
     var d = new Date(ts || Date.now());
     return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
   }
-  function ls(key, val) {
+  // ------------------------------------------------------------ 本机存储 / device storage
+  // 优先 localStorage，同时写一份 cookie 兜底：任一被清理时昵称仍能找回
+  // localStorage first, plus a cookie as a fallback, so the nickname survives either being cleared.
+  var cookieName = function (key) { return key.replace(/[^A-Za-z0-9_.-]/g, '_'); };
+  function storeGet(key) {
     try {
-      if (val === undefined) return localStorage.getItem(key);
-      localStorage.setItem(key, val);
-    } catch (e) { /* file:// 下可能不可用 / may be unavailable on file:// */ }
+      var v = localStorage.getItem(key);
+      if (v) return v;
+    } catch (e) { /* ignore */ }
+    try {
+      var m = document.cookie.match(new RegExp('(?:^|; )' + cookieName(key) + '=([^;]*)'));
+      if (m) return decodeURIComponent(m[1]);
+    } catch (e) { /* ignore */ }
     return null;
+  }
+  function storeSet(key, val) {
+    try { localStorage.setItem(key, val); } catch (e) { /* ignore */ }
+    try {
+      document.cookie = cookieName(key) + '=' + encodeURIComponent(val) +
+        '; max-age=' + (10 * 365 * 24 * 3600) + '; path=/; SameSite=Lax' +
+        (location.protocol === 'https:' ? '; Secure' : '');
+    } catch (e) { /* ignore */ }
+  }
+  function storeDel(key) {
+    try { localStorage.removeItem(key); } catch (e) { /* ignore */ }
+    try {
+      document.cookie = cookieName(key) + '=; max-age=0; path=/; SameSite=Lax' +
+        (location.protocol === 'https:' ? '; Secure' : '');
+    } catch (e) { /* ignore */ }
+  }
+
+  var NICK_KEY = 'enc.nick';
+  function makeNick() { return t('chat.user') + ENC.uid(4); }
+
+  /**
+   * 本设备昵称 / this device's nickname
+   * 老设备：一直沿用此前记住的昵称；新设备：生成一个新的随机昵称并立刻记住。
+   * Returning device: reuse the remembered nickname. New device: create one and remember it.
+   */
+  function deviceNick() {
+    var saved = (storeGet(NICK_KEY) || '').trim();
+    if (saved) return { nick: saved, isNew: false };
+    var nick = makeNick();
+    storeSet(NICK_KEY, nick);
+    return { nick: nick, isNew: true };
+  }
+
+  function saveNick(announce) {
+    var v = (nickEl.value || '').trim();
+    var before = storeGet(NICK_KEY);
+    if (!v) { storeDel(NICK_KEY); return null; }   // 清空 = 下次打开重新随机 / clearing resets it
+    nickEl.value = v;
+    storeSet(NICK_KEY, v);
+    if (room && room.name !== v) room.name = v;    // 立刻用新昵称发消息 / use it right away
+    if (announce && v !== before) sys('info', t('log.nickChanged', { nick: v }));
+    return v;
   }
 
   // ------------------------------------------------------------ 日志区 / log area
@@ -171,10 +221,10 @@
     if (room) { try { room.stop(); } catch (e) { /* ignore */ } room = null; }
 
     var pure = pureEl.checked;
-    var nick = (nickEl.value || '').trim() || (t('chat.user') + ENC.uid(4));
+    var nick = saveNick(false) || makeNick();
     nickEl.value = nick;
-    ls('enc.nick', nick);
-    ls('enc.broker', $('broker').value);
+    storeSet(NICK_KEY, nick);
+    storeSet('enc.broker', $('broker').value);
 
     sys('info', '────────────────────────────────────────────');
     sys('ok', isNew ? t('log.newRoom') : t('log.joinRoom', { guid: guid }));
@@ -280,11 +330,14 @@
       o.setAttribute('data-broker-id', b.id);
       $('broker').appendChild(o);
     });
-    var savedBroker = ls('enc.broker');
+    var savedBroker = storeGet('enc.broker');
     if (savedBroker && ENC.BROKERS.some(function (b) { return b.url === savedBroker; })) {
       $('broker').value = savedBroker;
     }
-    nickEl.value = ls('enc.nick') || (t('chat.user') + ENC.uid(4));
+
+    // 昵称：新设备随机生成并记住，老设备一直沿用 / nickname: new device → random & remembered
+    var nickState = deviceNick();
+    nickEl.value = nickState.nick;
 
     setShare(null);
     setPill('', t('status.off'));
@@ -294,6 +347,7 @@
     sys('info', t('log.ready', { v: ENC.VERSION }));
     sys('info', t('log.tip1'));
     sys('info', t('log.tip2'));
+    sys('info', t(nickState.isNew ? 'log.nickNew' : 'log.nickSaved', { nick: nickState.nick }));
 
     var q = new URLSearchParams(location.search).get('guid');
     if (q) {
@@ -311,6 +365,9 @@
   pureEl.onchange = function () { sys(this.checked ? 'warn' : 'info', t(this.checked ? 'log.pureOn' : 'log.pureOff')); };
   guidEl.addEventListener('keydown', function (e) { if (e.key === 'Enter') doConnect(); });
   msgEl.addEventListener('keydown', function (e) { if (e.key === 'Enter') doSend(); });
+  // 改完昵称（失焦/回车）立即记住 / persist the nickname as soon as it is edited
+  nickEl.addEventListener('change', function () { saveNick(true); });
+  nickEl.addEventListener('blur', function () { saveNick(true); });
 
   Array.prototype.forEach.call(document.querySelectorAll('#langSwitch button'), function (b) {
     b.onclick = function () { switchLang(b.getAttribute('data-lang')); };

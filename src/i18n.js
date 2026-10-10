@@ -88,6 +88,10 @@
       'log.pureOff': '已切换为混合模式：P2P 直连 + 中继兜底，并保留最近 100 条记录。',
       'log.copyFail': '复制失败，请手动选择文本复制。',
       'log.coreMissing': '核心脚本未加载（core.js 缺失）。',
+      'log.nickNew': '首次在本设备打开：已生成随机昵称「{nick}」并记住，之后一直沿用（可在上方修改）。',
+      'log.nickSaved': '已恢复本设备此前使用的昵称：「{nick}」（可在上方修改）。',
+      'log.nickChanged': '昵称已改为「{nick}」，本设备已记住。',
+      'title.nick': '本设备会记住这个昵称，下次打开自动沿用',
       'log.langZh': '语言已切换为中文。',
       'log.langEn': 'Language switched to English.'
     },
@@ -172,6 +176,10 @@
       'log.pureOff': 'Switched to Hybrid: WebRTC direct + relay fallback, last 100 messages kept.',
       'log.copyFail': 'Copy failed — please select the text and copy manually.',
       'log.coreMissing': 'Core script missing (core.js not loaded).',
+      'log.nickNew': 'First visit on this device: generated the random nickname “{nick}” and remembered it — it will be reused from now on (you can change it above).',
+      'log.nickSaved': 'Restored this device’s previous nickname: “{nick}” (you can change it above).',
+      'log.nickChanged': 'Nickname changed to “{nick}” and remembered on this device.',
+      'title.nick': 'This device remembers the nickname and reuses it next time',
       'log.langZh': '语言已切换为中文。',
       'log.langEn': 'Language switched to English.'
     }
