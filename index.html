@@ -1,0 +1,1444 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ENC · Serverless P2P Chat</title>
+<meta name="description" content="Serverless P2P chat room: share a GUID or a link, messages travel over WebRTC DataChannel. No backend to deploy. / 无服务器 P2P 聊天室：分享 GUID 或链接即可开聊，消息走 WebRTC 点对点直连，无需自建后端。">
+<style>
+  :root{
+    --bg:#0d1117; --bg2:#161b22; --bg3:#1c2430; --line:#2b3441;
+    --fg:#e6edf3; --dim:#8b98a5; --acc:#3b82f6; --acc2:#2563eb;
+    --ok:#3fb950; --warn:#d29922; --err:#f85149; --me:#7c5cff;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;background:var(--bg);color:var(--fg);
+    font-family:"Segoe UI","Microsoft YaHei",system-ui,-apple-system,sans-serif;
+    font-size:14px;display:flex;flex-direction:column;
+  }
+  header{
+    display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    padding:10px 16px;background:var(--bg2);border-bottom:1px solid var(--line);
+  }
+  header h1{font-size:15px;margin:0;font-weight:600;letter-spacing:.3px;white-space:nowrap}
+  header h1 em{color:var(--acc);font-style:normal}
+  .lang{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  .lang button{
+    background:transparent;color:var(--dim);border:none;padding:5px 10px;
+    font-size:12px;cursor:pointer;font-family:inherit;border-radius:0;
+  }
+  .lang button:hover{background:var(--bg3);color:var(--fg)}
+  .lang button.active{background:var(--acc);color:#fff}
+  #ghLink{color:var(--dim);font-size:12px;text-decoration:none;white-space:nowrap}
+  #ghLink:hover{color:var(--acc)}
+  #pill{
+    margin-left:auto;display:flex;align-items:center;gap:8px;
+    padding:5px 12px;border-radius:999px;background:var(--bg3);
+    border:1px solid var(--line);font-size:12px;color:var(--dim);white-space:nowrap;
+  }
+  #dot{width:8px;height:8px;border-radius:50%;background:#555;flex:0 0 auto}
+  #pill.on #dot{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  #pill.wait #dot{background:var(--warn);box-shadow:0 0 8px var(--warn)}
+  #pill.on{color:var(--fg);border-color:#2d5a3d}
+  .bar{
+    display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+    padding:10px 16px;background:var(--bg2);border-bottom:1px solid var(--line);
+  }
+  .bar.second{border-top:1px solid var(--line);border-bottom:none}
+  label.lb{color:var(--dim);font-size:12px;white-space:nowrap}
+  input[type=text],select{
+    background:var(--bg);border:1px solid var(--line);color:var(--fg);
+    padding:7px 10px;border-radius:6px;font-size:13px;outline:none;
+    font-family:inherit;
+  }
+  input[type=text]:focus,select:focus{border-color:var(--acc)}
+  #guid{width:330px;font-family:ui-monospace,Consolas,monospace}
+  #nick{width:110px}
+  #msg{flex:1;min-width:160px}
+  button{
+    background:var(--acc);color:#fff;border:none;padding:8px 16px;border-radius:6px;
+    font-size:13px;cursor:pointer;font-family:inherit;white-space:nowrap;
+  }
+  button:hover{background:var(--acc2)}
+  button:disabled{background:#2a313b;color:#5d6874;cursor:not-allowed}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--dim)}
+  button.ghost:hover{background:var(--bg3);color:var(--fg)}
+  .hint{color:var(--dim);font-size:12px;margin-left:auto}
+  #log{
+    flex:1;min-height:180px;overflow-y:auto;padding:10px 16px;
+    font-family:ui-monospace,Consolas,"Courier New",monospace;font-size:13px;
+    line-height:1.6;background:var(--bg);scroll-behavior:smooth;
+  }
+  #log .row{padding:2px 0;white-space:pre-wrap;word-break:break-word}
+  #log .t{color:#5d6874;margin-right:8px}
+  .lvl-info{color:var(--dim)}
+  .lvl-ok{color:var(--ok)}
+  .lvl-warn{color:var(--warn)}
+  .lvl-err{color:var(--err)}
+  .chat .who{color:var(--acc);font-weight:600}
+  .chat.me .who{color:var(--me)}
+  .chat .tm{color:#5d6874;font-size:11px;margin-left:8px}
+  .chat .tx{color:var(--fg)}
+  .chat.me .tx{color:#c9d6ff}
+  #guidTag{color:#ffd479;font-weight:600;user-select:all}
+  footer{
+    padding:8px 16px;background:var(--bg2);border-top:1px solid var(--line);
+    display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;
+  }
+  footer .url{
+    color:var(--acc);flex:1;min-width:200px;word-break:break-all;user-select:all;
+    font-family:ui-monospace,Consolas,monospace;
+  }
+  footer .url.off{color:#5d6874}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{background:#303a47;border-radius:5px}
+  ::-webkit-scrollbar-track{background:transparent}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>ENC · <em data-i18n="app.title">无服务器 P2P 聊天室</em></h1>
+  <div class="lang" id="langSwitch">
+    <button type="button" data-lang="zh">中文</button>
+    <button type="button" data-lang="en">EN</button>
+  </div>
+  <a id="ghLink" href="https://github.com/yashika/AnonymouseChatWeb" target="_blank" rel="noopener" data-i18n="app.github">GitHub</a>
+  <div id="pill"><i id="dot"></i><span id="pillText">未连接</span></div>
+</header>
+
+<div class="bar">
+  <label class="lb" for="guid" data-i18n="lbl.guid">房间 GUID</label>
+  <input type="text" id="guid" data-i18n-ph="ph.guid" autocomplete="off" spellcheck="false">
+  <button id="btnConnect" data-i18n="btn.connect">连接</button>
+  <button id="btnStop" class="ghost" disabled data-i18n="btn.disconnect">断开</button>
+  <label class="lb"><input type="checkbox" id="pure"> <span data-i18n="lbl.pure">纯 P2P</span></label>
+</div>
+
+<div class="bar second">
+  <label class="lb" for="broker" data-i18n="lbl.broker">公共节点</label>
+  <select id="broker"></select>
+  <label class="lb" for="nick" data-i18n="lbl.nick">我的昵称</label>
+  <input type="text" id="nick" autocomplete="off">
+  <span class="hint" data-i18n="hint.sameNode">提示：双方必须选同一个节点才能互相发现</span>
+</div>
+
+<div id="log" aria-live="polite"></div>
+
+<div class="bar second">
+  <input type="text" id="msg" data-i18n-ph="ph.msg" autocomplete="off" disabled>
+  <button id="btnSend" disabled data-i18n="btn.send">发送</button>
+  <button id="btnClear" class="ghost" data-i18n="btn.clear">清屏</button>
+</div>
+
+<footer>
+  <span style="color:var(--dim)" data-i18n="lbl.share">分享链接</span>
+  <span class="url off" id="shareUrl" data-i18n="share.none">连接后会在这里生成分享链接</span>
+  <button id="btnCopy" class="ghost" disabled data-i18n="btn.copyLink">复制链接</button>
+</footer>
+
+<script>
+/*!
+ * ENC i18n — 中英双语文案 / Chinese & English strings
+ * ------------------------------------------------------------------
+ * 语言选择优先级 / language priority:
+ *   ?lang=xx  →  localStorage('enc.lang')  →  navigator.language  →  zh
+ */
+(function () {
+  'use strict';
+
+  var DICT = {
+    /* ============================================================ 中文 */
+    zh: {
+      'html.lang': 'zh-CN',
+      'doc.title': 'ENC · 无服务器 P2P 聊天室',
+      'app.title': '无服务器 P2P 聊天室',
+      'app.github': 'GitHub 源码',
+
+      'status.off': '未连接',
+      'status.connecting': '连接中… · 在线 {n} 人',
+      'status.on.relay': '已连接 · 在线 {n} 人 · 中继',
+      'status.on.pure': '已连接 · 在线 {n} 人 · 纯P2P',
+      'status.p2p': ' · P2P直连 {a}/{b}',
+
+      'lbl.guid': '房间 GUID',
+      'ph.guid': '留空 = 新建聊天室；粘贴别人的 GUID / 分享链接 = 加入',
+      'btn.connect': '连接',
+      'btn.disconnect': '断开',
+      'lbl.pure': '纯 P2P（聊天内容不经中继）',
+      'lbl.broker': '公共节点',
+      'lbl.nick': '我的昵称',
+      'hint.sameNode': '提示：双方必须选同一个节点才能互相发现',
+      'ph.msg': '输入消息，回车发送…',
+      'btn.send': '发送',
+      'btn.clear': '清屏',
+      'lbl.share': '分享链接',
+      'share.none': '连接后会在这里生成分享链接',
+      'btn.copyLink': '复制链接',
+      'btn.copyGuid': '复制 GUID',
+      'btn.copied': '已复制 ✓',
+
+      'broker.emqx': 'EMQX 公共节点（推荐）',
+      'broker.hivemq': 'HiveMQ 公共节点',
+      'broker.mosquitto': 'Mosquitto 测试节点',
+
+      'chat.me': '我',
+      'chat.anon': '匿名',
+      'chat.user': '用户',
+
+      'log.connecting': '正在连接公共节点 {url} …',
+      'log.connected.relay': '已接入公共节点（信令 + 保留最近 100 条记录）',
+      'log.connected.pure': '已接入公共节点（仅用于信令，聊天内容走 P2P）',
+      'log.peerJoin': '成员加入：{name}  [{id}]',
+      'log.peerLeave': '成员离开：{name}',
+      'log.peerOffline': '成员离线：{name}',
+      'log.p2pUp': '🔗 P2P 直连已建立 ↔ {name}',
+      'log.p2pDown': 'P2P 直连不可用（{state}），自动走中继。',
+      'log.mqttClose': '与公共节点的连接断开，正在重连…',
+      'log.mqttError': '节点错误：{msg}',
+      'log.retryIn': '{n} 秒后重试连接…',
+      'log.pureNoPeer': '纯 P2P 模式下当前没有已建直连的在线成员，本条消息未能送达对方。',
+      'log.notConnected': '尚未连接公共节点，本条消息只保存在本机，未广播。',
+      'log.noWebRTC': 'WebRTC 不可用：{msg}',
+      'log.offerFail': '创建 offer 失败：{msg}',
+      'log.handleOfferFail': '处理 offer 失败：{msg}',
+      'log.handleAnswerFail': '处理 answer 失败：{msg}',
+
+      'log.newRoom': '新建聊天室：正在接入公共节点…',
+      'log.joinRoom': '加入聊天室 [{guid}]：正在接入公共节点…',
+      'log.modePure': '传输模式：纯 P2P（聊天内容只走 WebRTC 直连，不经过中继）',
+      'log.modeHybrid': '传输模式：混合模式（WebRTC 直连 + 中继兜底，并保留最近 100 条记录）',
+      'log.created': '✅ 聊天室创建成功，SESSION GUID（把它发给对方即可加入）：',
+      'log.joined': '✅ 已加入 GUID 房间：',
+      'log.shareIs': '分享链接：',
+      'log.shareHelp': '把上面这个链接发给别人，对方打开就能直接进入本房间并看到最近 100 条聊天记录。',
+      'log.fileWarning': '⚠️ 当前是以本地文件(file://)打开的，这个链接只在本机有效。要真正分享给别人，请把 index.html 放到任意静态网站 / 内网 HTTP 服务上，再用那个网址打开。',
+      'log.replay': '📜 回放历史消息 {n} 条（房间最多保留最近 {cap} 条）',
+      'log.noHistory': '本房间暂无历史记录 —— 你是第一个到达的人。',
+      'log.needConnect': '请先点击「连接」。',
+      'log.disconnected': '已断开连接。',
+      'log.tooLong': '消息过长，已截断到 {n} 字符。',
+      'log.ready': 'ENC 无服务器 P2P 聊天室 v{v} 已就绪。',
+      'log.tip1': '① 输入框留空 → 点「连接」= 新建聊天室；② 粘贴别人的 GUID / 分享链接 → 点「连接」= 加入同一个房间。',
+      'log.tip2': '③ 多个人使用同一个 GUID 即可互相收发消息；链接里的 ?guid= 会自动加入。',
+      'log.autoJoin': '检测到分享链接参数 ?guid={g}，正在自动加入房间并加载最近 100 条聊天记录…',
+      'log.cleared': '已清屏。',
+      'log.noRTC': '当前浏览器不支持 WebRTC，P2P 直连不可用，将只能使用中继模式。',
+      'log.pureOn': '已切换为纯 P2P：聊天内容只走 WebRTC 直连，不写入公共节点的保留记录；若对方离线或 NAT 打洞失败，消息将无法送达（双方都需在线才能收到历史记录）。',
+      'log.pureOff': '已切换为混合模式：P2P 直连 + 中继兜底，并保留最近 100 条记录。',
+      'log.copyFail': '复制失败，请手动选择文本复制。',
+      'log.coreMissing': '核心脚本未加载（core.js 缺失）。',
+      'log.langZh': '语言已切换为中文。',
+      'log.langEn': 'Language switched to English.'
+    },
+
+    /* ========================================================== English */
+    en: {
+      'html.lang': 'en',
+      'doc.title': 'ENC · Serverless P2P Chat',
+      'app.title': 'Serverless P2P Chat',
+      'app.github': 'Source on GitHub',
+
+      'status.off': 'Disconnected',
+      'status.connecting': 'Connecting… · {n} online',
+      'status.on.relay': 'Connected · {n} online · Relay',
+      'status.on.pure': 'Connected · {n} online · Pure P2P',
+      'status.p2p': ' · P2P {a}/{b}',
+
+      'lbl.guid': 'Room GUID',
+      'ph.guid': 'Empty = create a room; paste a GUID or share link = join',
+      'btn.connect': 'Connect',
+      'btn.disconnect': 'Disconnect',
+      'lbl.pure': 'Pure P2P (chat never touches the relay)',
+      'lbl.broker': 'Public node',
+      'lbl.nick': 'My nickname',
+      'hint.sameNode': 'Tip: both sides must pick the same node to find each other',
+      'ph.msg': 'Type a message, press Enter to send…',
+      'btn.send': 'Send',
+      'btn.clear': 'Clear',
+      'lbl.share': 'Share link',
+      'share.none': 'Your share link will appear here once you connect',
+      'btn.copyLink': 'Copy link',
+      'btn.copyGuid': 'Copy GUID',
+      'btn.copied': 'Copied ✓',
+
+      'broker.emqx': 'EMQX public node (recommended)',
+      'broker.hivemq': 'HiveMQ public node',
+      'broker.mosquitto': 'Mosquitto test node',
+
+      'chat.me': 'Me',
+      'chat.anon': 'Anonymous',
+      'chat.user': 'User',
+
+      'log.connecting': 'Connecting to public node {url} …',
+      'log.connected.relay': 'Connected to the public node (signaling + last 100 messages kept)',
+      'log.connected.pure': 'Connected to the public node (signaling only; chat goes P2P)',
+      'log.peerJoin': 'Peer joined: {name}  [{id}]',
+      'log.peerLeave': 'Peer left: {name}',
+      'log.peerOffline': 'Peer offline: {name}',
+      'log.p2pUp': '🔗 P2P direct channel established ↔ {name}',
+      'log.p2pDown': 'P2P direct channel unavailable ({state}); falling back to the relay.',
+      'log.mqttClose': 'Disconnected from the public node, reconnecting…',
+      'log.mqttError': 'Node error: {msg}',
+      'log.retryIn': 'Retrying in {n}s…',
+      'log.pureNoPeer': 'Pure P2P: no online peer has a direct channel yet, so this message was not delivered.',
+      'log.notConnected': 'Not connected to the public node yet — this message is stored locally only.',
+      'log.noWebRTC': 'WebRTC unavailable: {msg}',
+      'log.offerFail': 'Failed to create offer: {msg}',
+      'log.handleOfferFail': 'Failed to handle offer: {msg}',
+      'log.handleAnswerFail': 'Failed to handle answer: {msg}',
+
+      'log.newRoom': 'Creating a new room: connecting to the public node…',
+      'log.joinRoom': 'Joining room [{guid}]: connecting to the public node…',
+      'log.modePure': 'Transport: Pure P2P (chat travels only over the WebRTC direct channel)',
+      'log.modeHybrid': 'Transport: Hybrid (WebRTC direct + relay fallback, last 100 messages kept)',
+      'log.created': '✅ Room created. SESSION GUID (send it to others so they can join):',
+      'log.joined': '✅ Joined GUID room:',
+      'log.shareIs': 'Share link:',
+      'log.shareHelp': 'Send that link to anyone — opening it joins this room automatically and replays the last 100 messages.',
+      'log.fileWarning': '⚠️ This page is open from a local file (file://), so the link works only on this machine. To really share it, host index.html on any static website / HTTP server and use that URL.',
+      'log.replay': '📜 Replayed {n} messages (a room keeps the latest {cap})',
+      'log.noHistory': 'No history in this room yet — you are the first one here.',
+      'log.needConnect': 'Click “Connect” first.',
+      'log.disconnected': 'Disconnected.',
+      'log.tooLong': 'Message too long — truncated to {n} characters.',
+      'log.ready': 'ENC Serverless P2P Chat v{v} is ready.',
+      'log.tip1': '① Leave the box empty → “Connect” creates a room. ② Paste a GUID / share link → “Connect” joins that room.',
+      'log.tip2': '③ Everyone using the same GUID can chat together; ?guid= in the link joins automatically.',
+      'log.autoJoin': 'Found ?guid={g} in the URL — joining the room and loading the last 100 messages…',
+      'log.cleared': 'Cleared.',
+      'log.noRTC': 'This browser does not support WebRTC, so P2P is unavailable and only the relay can be used.',
+      'log.pureOn': 'Switched to Pure P2P: chat travels only over WebRTC and is not stored on the public node. If the other side is offline or NAT traversal fails, messages cannot be delivered (both sides must be online to receive history).',
+      'log.pureOff': 'Switched to Hybrid: WebRTC direct + relay fallback, last 100 messages kept.',
+      'log.copyFail': 'Copy failed — please select the text and copy manually.',
+      'log.coreMissing': 'Core script missing (core.js not loaded).',
+      'log.langZh': '语言已切换为中文。',
+      'log.langEn': 'Language switched to English.'
+    }
+  };
+
+  var LANGS = ['zh', 'en'];
+  var current = 'zh';
+  var handlers = [];
+
+  function t(key, params) {
+    var table = DICT[current] || DICT.zh;
+    var s = table[key];
+    if (s == null) s = DICT.zh[key];
+    if (s == null) s = key;
+    if (params) {
+      s = s.replace(/\{(\w+)\}/g, function (m, k) {
+        return (params[k] === undefined || params[k] === null) ? m : String(params[k]);
+      });
+    }
+    return s;
+  }
+
+  function detect() {
+    try {
+      if (typeof location !== 'undefined' && location.search) {
+        var q = new URLSearchParams(location.search).get('lang');
+        if (q) { q = q.toLowerCase().slice(0, 2); if (DICT[q]) return q; }
+      }
+    } catch (e) { /* ignore */ }
+    try {
+      if (typeof localStorage !== 'undefined') {
+        var s = localStorage.getItem('enc.lang');
+        if (s && DICT[s]) return s;
+      }
+    } catch (e) { /* ignore */ }
+    try {
+      var n = String((typeof navigator !== 'undefined' && (navigator.language || navigator.userLanguage)) || 'zh').toLowerCase();
+      return n.indexOf('zh') === 0 ? 'zh' : 'en';
+    } catch (e) { /* ignore */ }
+    return 'zh';
+  }
+
+  /** 把 data-i18n / data-i18n-ph / data-i18n-title 的元素填上文案 */
+  function apply(root) {
+    root = root || (typeof document !== 'undefined' ? document : null);
+    if (!root || !root.querySelectorAll) return;
+    root.querySelectorAll('[data-i18n]').forEach(function (el) {
+      el.textContent = t(el.getAttribute('data-i18n'));
+    });
+    root.querySelectorAll('[data-i18n-ph]').forEach(function (el) {
+      el.setAttribute('placeholder', t(el.getAttribute('data-i18n-ph')));
+    });
+    root.querySelectorAll('[data-i18n-title]').forEach(function (el) {
+      el.setAttribute('title', t(el.getAttribute('data-i18n-title')));
+    });
+    try {
+      document.title = t('doc.title');
+      document.documentElement.lang = t('html.lang');
+    } catch (e) { /* ignore */ }
+  }
+
+  function setLang(lang, silent) {
+    if (!DICT[lang]) return current;
+    var changed = lang !== current;
+    current = lang;
+    try { if (typeof localStorage !== 'undefined') localStorage.setItem('enc.lang', lang); } catch (e) { /* ignore */ }
+    apply();
+    if (!silent) handlers.forEach(function (h) { try { h(lang, changed); } catch (e) { /* ignore */ } });
+    return current;
+  }
+
+  function onApply(fn) { handlers.push(fn); return fn; }
+  function getLang() { return current; }
+
+  var API = { DICT: DICT, LANGS: LANGS, t: t, detect: detect, apply: apply, setLang: setLang, getLang: getLang, onApply: onApply };
+
+  current = detect();
+  if (typeof globalThis !== 'undefined') globalThis.ENC_I18N = API;
+  if (typeof module !== 'undefined' && module.exports) module.exports = API;
+})();
+
+</script>
+<script>
+/*!
+ * ENC core — 无服务器 P2P 聊天核心
+ * ------------------------------------------------------------------
+ * 只用公共基础设施，不需要你自己部署任何服务器：
+ *   1) 公共 MQTT Broker (WSS)  —— 充当 WebRTC 信令交换 + 房间存在性广播
+ *      + retained 消息 = 让后来者也能看到最近 100 条聊天记录
+ *   2) WebRTC DataChannel (P2P 直连) —— 真正的点对点消息通道
+ *
+ * 本文件不依赖任何第三方库：内置了一个极简 MQTT 3.1.1 over WebSocket 客户端。
+ * 浏览器与 Node 18+ 均可直接运行（Node 下自动跳过 WebRTC 部分）。
+ */
+(function () {
+  'use strict';
+
+  var te = new TextEncoder();
+  var td = new TextDecoder();
+
+  var TOPIC_ROOT = 'dsh/encnetchat/v1/r/';
+  var HISTORY_CAP = 100;      // 最多保留/回放 100 条
+  var MAX_TEXT = 4000;        // 单条文本上限
+  var PRESENCE_MS = 8000;     // 心跳
+  var PEER_TTL = 26000;       // 多久没心跳算离线
+  var HIST_DEBOUNCE = 700;    // retained 历史发布节流
+
+  var ICE_SERVERS = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    { urls: 'stun:stun.nextcloud.com:443' }
+  ];
+
+  var BROKERS = [
+    { id: 'emqx', label: 'EMQX public node', url: 'wss://broker.emqx.io:8084/mqtt' },
+    { id: 'hivemq', label: 'HiveMQ public node', url: 'wss://broker.hivemq.com:8884/mqtt' },
+    { id: 'mosquitto', label: 'Mosquitto test node', url: 'wss://test.mosquitto.org:8081/mqtt' }
+  ];
+
+  /** 取当前语言的文案；i18n.js 未加载时退化为 key 本身 */
+  function T(key, params) {
+    var i = (typeof globalThis !== 'undefined') ? globalThis.ENC_I18N : null;
+    return i ? i.t(key, params) : key;
+  }
+
+  // ---------------------------------------------------------------- utils
+  var HEX = '0123456789abcdef';
+  function uid(n) {
+    n = n || 16;
+    var s = '';
+    if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+      var a = new Uint8Array(n);
+      crypto.getRandomValues(a);
+      for (var i = 0; i < n; i++) s += HEX[a[i] & 15];
+      return s;
+    }
+    for (var j = 0; j < n; j++) s += HEX[Math.floor(Math.random() * 16)];
+    return s;
+  }
+
+  /** 生成 RFC4122 v4 GUID */
+  function newGuid() {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+    var b = new Uint8Array(16);
+    if (typeof crypto !== 'undefined' && crypto.getRandomValues) crypto.getRandomValues(b);
+    else for (var i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256);
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    var h = [];
+    for (var k = 0; k < 16; k++) h.push((b[k] + 256).toString(16).slice(1));
+    return h.slice(0, 4).join('') + '-' + h.slice(4, 6).join('') + '-' + h.slice(6, 8).join('') +
+      '-' + h.slice(8, 10).join('') + '-' + h.slice(10, 16).join('');
+  }
+
+  /** MQTT 主题里不能出现 + # 和空字符 */
+  function sanitizeTopic(s) {
+    return String(s).replace(/[+#\u0000]/g, '-').replace(/^\/+|\/+$/g, '') || 'default';
+  }
+
+  function concat(a, b) {
+    var out = new Uint8Array(a.length + b.length);
+    out.set(a, 0); out.set(b, a.length);
+    return out;
+  }
+
+  // ---------------------------------------------------------------- 极简 MQTT 3.1.1
+  function encodeRemainingLength(n) {
+    var out = [];
+    do {
+      var d = n % 128;
+      n = Math.floor(n / 128);
+      if (n > 0) d |= 0x80;
+      out.push(d);
+    } while (n > 0);
+    return new Uint8Array(out);
+  }
+
+  function encodeString(str) {
+    var b = te.encode(str);
+    var h = new Uint8Array([(b.length >> 8) & 0xff, b.length & 0xff]);
+    return concat(h, b);
+  }
+
+  function MqttClient(url, opts) {
+    opts = opts || {};
+    this.url = url;
+    this.clientId = opts.clientId || ('enc_' + uid(14));
+    this.keepalive = opts.keepalive || 45;
+    this.handlers = {};
+    this.subs = {};
+    this.buf = new Uint8Array(0);
+    this.pid = 1;
+    this.connected = false;
+    this.closedByUser = false;
+    this.retries = 0;
+    this.ws = null;
+  }
+
+  MqttClient.prototype.on = function (ev, fn) {
+    (this.handlers[ev] = this.handlers[ev] || []).push(fn);
+    return this;
+  };
+  MqttClient.prototype.emit = function (ev) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    var list = this.handlers[ev] || [];
+    for (var i = 0; i < list.length; i++) {
+      try { list[i].apply(null, args); } catch (e) { if (typeof console !== 'undefined') console.error(e); }
+    }
+  };
+
+  MqttClient.prototype.connect = function () {
+    var self = this;
+    this.closedByUser = false;
+    var ws;
+    try {
+      ws = new WebSocket(this.url, ['mqtt']);
+    } catch (e) {
+      this.emit('error', new Error('Cannot open WebSocket: ' + e.message));
+      this._retry();
+      return;
+    }
+    ws.binaryType = 'arraybuffer';
+    this.ws = ws;
+
+    ws.onopen = function () {
+      self.buf = new Uint8Array(0);
+      self._send(self._connectPacket());
+    };
+    ws.onmessage = function (ev) {
+      var d = ev.data, u8;
+      if (d instanceof ArrayBuffer) u8 = new Uint8Array(d);
+      else if (d && d.buffer) u8 = new Uint8Array(d.buffer, d.byteOffset, d.byteLength);
+      else if (typeof d === 'string') u8 = te.encode(d);
+      else return;
+      try { self._push(u8); } catch (e) { self.emit('error', e); }
+    };
+    ws.onerror = function () { self.emit('error', new Error('WebSocket error (' + self.url + ')')); };
+    ws.onclose = function (ev) {
+      self.connected = false;
+      clearInterval(self.pingTimer); self.pingTimer = null;
+      self.emit('close', ev);
+      if (!self.closedByUser) self._retry();
+    };
+  };
+
+  MqttClient.prototype._retry = function () {
+    var self = this;
+    if (this.closedByUser) return;
+    if (this.retryTimer) return;
+    var delay = Math.min(1000 * Math.pow(2, this.retries), 15000);
+    this.retries++;
+    this.emit('retry', delay);
+    this.retryTimer = setTimeout(function () {
+      self.retryTimer = null;
+      if (!self.closedByUser) self.connect();
+    }, delay);
+  };
+
+  MqttClient.prototype._send = function (u8) {
+    if (this.ws && this.ws.readyState === 1) { this.ws.send(u8); return true; }
+    return false;
+  };
+
+  MqttClient.prototype._connectPacket = function () {
+    var vh = new Uint8Array([0x00, 0x04, 0x4d, 0x51, 0x54, 0x54, 0x04, 0x02,
+      (this.keepalive >> 8) & 0xff, this.keepalive & 0xff]);
+    var payload = encodeString(this.clientId);
+    var body = concat(vh, payload);
+    return concat(concat(new Uint8Array([0x10]), encodeRemainingLength(body.length)), body);
+  };
+
+  MqttClient.prototype._push = function (chunk) {
+    this.buf = concat(this.buf, chunk);
+    for (;;) {
+      var b = this.buf;
+      if (b.length < 2) return;
+      var type = b[0] >> 4, flags = b[0] & 0x0f;
+      var mult = 1, len = 0, i = 1;
+      for (;;) {
+        if (i >= b.length) return;
+        var d = b[i++];
+        len += (d & 127) * mult;
+        mult *= 128;
+        if ((d & 128) === 0) break;
+        if (mult > 2097152) { this.emit('error', new Error('Malformed MQTT remaining length')); return; }
+      }
+      var total = i + len;
+      if (b.length < total) return;
+      var payload = b.subarray(i, total);
+      this.buf = b.subarray(total);
+      this._handle(type, flags, payload);
+    }
+  };
+
+  MqttClient.prototype._handle = function (type, flags, p) {
+    if (type === 2) {                       // CONNACK
+      var rc = p[1];
+      if (rc === 0) {
+        this.connected = true;
+        this.retries = 0;
+        var self = this;
+        clearInterval(this.pingTimer);
+        this.pingTimer = setInterval(function () { self._send(new Uint8Array([0xc0, 0x00])); },
+          Math.max(5, this.keepalive / 2) * 1000);
+        // 重新订阅（首次 & 断线重连都走这里）
+        Object.keys(this.subs).forEach(function (t) { self._sub(t, self.subs[t]); });
+        this.emit('connect');
+      } else {
+        this.emit('error', new Error('MQTT connection refused, returnCode=' + rc));
+      }
+      return;
+    }
+    if (type === 3) {                       // PUBLISH
+      var qos = (flags >> 1) & 3;
+      var tl = (p[0] << 8) | p[1];
+      var topic = td.decode(p.subarray(2, 2 + tl));
+      var off = 2 + tl, packetId = 0;
+      if (qos > 0) { packetId = (p[off] << 8) | p[off + 1]; off += 2; }
+      var body = p.subarray(off);
+      if (qos === 1) {                      // 回 PUBACK
+        this._send(new Uint8Array([0x40, 0x02, (packetId >> 8) & 0xff, packetId & 0xff]));
+      }
+      this.emit('message', topic, body, flags & 1);
+      return;
+    }
+    if (type === 9) {                       // SUBACK
+      var codes = [];
+      for (var i = 2; i < p.length; i++) codes.push(p[i]);
+      this.emit('suback', codes);
+      return;
+    }
+  };
+
+  MqttClient.prototype._sub = function (topic, qos) {
+    qos = qos || 0;
+    var id = this.pid = (this.pid % 60000) + 1;
+    var body = concat(concat(new Uint8Array([(id >> 8) & 0xff, id & 0xff]),
+      encodeString(topic)), new Uint8Array([qos]));
+    return this._send(concat(concat(new Uint8Array([0x82]), encodeRemainingLength(body.length)), body));
+  };
+
+  /** 订阅（自动记忆，断线重连后恢复） */
+  MqttClient.prototype.subscribe = function (topic, qos) {
+    this.subs[topic] = qos || 0;
+    if (this.connected) this._sub(topic, qos || 0);
+    return this;
+  };
+
+  MqttClient.prototype.publish = function (topic, payloadStr, opts) {
+    opts = opts || {};
+    var qos = opts.qos || 0;
+    var body = encodeString(topic);
+    if (qos > 0) {
+      var id = this.pid = (this.pid % 60000) + 1;
+      body = concat(body, new Uint8Array([(id >> 8) & 0xff, id & 0xff]));
+    }
+    body = concat(body, te.encode(payloadStr));
+    var header = new Uint8Array([0x30 | (qos << 1) | (opts.retain ? 1 : 0)]);
+    return this._send(concat(concat(header, encodeRemainingLength(body.length)), body));
+  };
+
+  MqttClient.prototype.close = function () {
+    this.closedByUser = true;
+    clearInterval(this.pingTimer); this.pingTimer = null;
+    clearTimeout(this.retryTimer); this.retryTimer = null;
+    if (this.ws && this.ws.readyState === 1) {
+      try { this._send(new Uint8Array([0xe0, 0x00])); } catch (e) { /* ignore */ }
+      try { this.ws.close(); } catch (e2) { /* ignore */ }
+    }
+    this.connected = false;
+  };
+
+  // ---------------------------------------------------------------- Room
+  function Room(opts) {
+    opts = opts || {};
+    this.guid = String(opts.guid || newGuid());
+    this.broker = opts.broker || BROKERS[0].url;
+    this.name = opts.name || (T('chat.user') + uid(4));
+    this.id = opts.id || ('p-' + uid(10));
+    this.pureP2P = !!opts.pureP2P;
+    this.useP2P = (typeof RTCPeerConnection !== 'undefined');
+
+    this.base = TOPIC_ROOT + sanitizeTopic(this.guid);
+    this.messages = [];      // 最近 100 条
+    this.seen = {};
+    this.seenCount = 0;
+    this.peers = {};         // id -> {id,name,last,p2p}
+    this.pcs = {};           // id -> RTCPeerConnection
+    this.dcs = {};           // id -> RTCDataChannel
+    this.pendingIce = {};
+    this.handlers = {};
+    this.startedAt = 0;
+    this.gotHistory = false;
+  }
+
+  Room.prototype.on = function (ev, fn) {
+    (this.handlers[ev] = this.handlers[ev] || []).push(fn);
+    return this;
+  };
+  Room.prototype.emit = function (ev) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    var list = this.handlers[ev] || [];
+    for (var i = 0; i < list.length; i++) {
+      try { list[i].apply(null, args); } catch (e) { if (typeof console !== 'undefined') console.error(e); }
+    }
+  };
+  Room.prototype.log = function (level, text) { this.emit('log', { level: level, text: text, ts: Date.now() }); };
+
+  Room.prototype.shareUrl = function (href) {
+    var u = String(href || (typeof location !== 'undefined' ? location.href : ''));
+    return u.split('#')[0].split('?')[0] + '?guid=' + encodeURIComponent(this.guid);
+  };
+
+  Room.prototype.start = function () {
+    var self = this;
+    this.startedAt = Date.now();
+    this.log('info', T('log.connecting', { url: this.broker }));
+
+    var mqtt = new MqttClient(this.broker, { clientId: 'enc_' + this.id + '_' + uid(6) });
+    this.mqtt = mqtt;
+
+    mqtt.on('connect', function () {
+      self.log('ok', T(self.pureP2P ? 'log.connected.pure' : 'log.connected.relay'));
+      mqtt.subscribe(self.base + '/s');   // 信令
+      mqtt.subscribe(self.base + '/p');   // 在线心跳
+      if (!self.pureP2P) {
+        mqtt.subscribe(self.base + '/m'); // 聊天消息
+        mqtt.subscribe(self.base + '/h'); // retained 历史
+      }
+      self.publishPresence(false);
+      clearInterval(self.presTimer);
+      self.presTimer = setInterval(function () { self.tick(); }, 4000);
+      self.emit('status', self.status());
+    });
+
+    mqtt.on('message', function (topic, payload) {
+      var text = td.decode(payload);
+      var suffix = topic.slice(self.base.length);
+      if (suffix === '/m') {
+        var m = safeJson(text);
+        if (m) self.accept(m);
+      } else if (suffix === '/h') {
+        var h = safeJson(text);
+        if (h && h.items) {
+          self.gotHistory = true;
+          var added = self.mergeHistory(h.items);
+          if (!added && !self.historyReported) { self.historyReported = true; }
+          // 我们手里有对方没有的消息 → 回写一次，保证最终一致
+          var localNewer = self.messages.some(function (x) {
+            return !h.items.some(function (y) { return y.id === x.id; });
+          });
+          if (localNewer) self.scheduleHistoryPublish();
+        }
+      } else if (suffix === '/s') {
+        var s = safeJson(text);
+        if (s && s.to === self.id && s.from !== self.id) self.handleSignal(s);
+      } else if (suffix === '/p') {
+        var p = safeJson(text);
+        if (p) self.handlePresence(p);
+      }
+    });
+
+    mqtt.on('close', function () {
+      self.emit('status', self.status());
+      if (!mqtt.closedByUser) self.log('warn', T('log.mqttClose'));
+    });
+    mqtt.on('error', function (e) { self.log('err', T('log.mqttError', { msg: e.message })); });
+    mqtt.on('retry', function (d) { self.log('info', T('log.retryIn', { n: Math.round(d / 1000) })); });
+    mqtt.on('suback', function () { self.emit('status', self.status()); });
+
+    mqtt.connect();
+
+    // 若 3 秒内没收到 retained 历史，说明这确实是新房间
+    setTimeout(function () {
+      if (!self.gotHistory && !self.pureP2P && self.mqtt && self.mqtt.connected) {
+        self.gotHistory = true;
+        self.emit('nohistory');
+      }
+    }, 3000);
+    return this;
+  };
+
+  Room.prototype.tick = function () {
+    if (!this.mqtt || !this.mqtt.connected) return;
+    this.publishPresence(false);
+    var now = Date.now(), changed = false;
+    for (var id in this.peers) {
+      if (now - this.peers[id].last > PEER_TTL) {
+        self.log('info', T('log.peerOffline', { name: self.peers[id].name }));
+        delete this.peers[id];
+        this.dropPeer(id);
+        changed = true;
+      }
+    }
+    if (changed) this.emit('peers', this.peerList());
+    this.emit('status', this.status());
+  };
+
+  Room.prototype.publishPresence = function (re) {
+    if (!this.mqtt || !this.mqtt.connected) return;
+    this.mqtt.publish(this.base + '/p', JSON.stringify({
+      t: 'hi', id: this.id, name: this.name, re: !!re, ts: Date.now()
+    }));
+  };
+
+  Room.prototype.handlePresence = function (p) {
+    if (!p.id || p.id === this.id) return;
+    if (p.t === 'bye') {
+      if (this.peers[p.id]) {
+        this.log('info', T('log.peerLeave', { name: this.peers[p.id].name }));
+        delete this.peers[p.id];
+        this.dropPeer(p.id);
+        this.emit('peers', this.peerList());
+      }
+      return;
+    }
+    var fresh = !this.peers[p.id];
+    this.peers[p.id] = { id: p.id, name: p.name || T('chat.anon'), last: Date.now(), p2p: !!this.dcOpen(p.id) };
+    if (fresh) {
+      this.log('info', T('log.peerJoin', { name: this.peers[p.id].name, id: p.id }));
+      if (!p.re) this.publishPresence(true);
+      this.emit('peers', this.peerList());
+      if (this.useP2P) this.ensurePeer(p.id);
+    }
+  };
+
+  Room.prototype.peerList = function () {
+    var out = [];
+    for (var id in this.peers) out.push({ id: id, name: this.peers[id].name, p2p: this.dcOpen(id) });
+    return out;
+  };
+
+  Room.prototype.status = function () {
+    var online = 0, p2p = 0;
+    for (var id in this.peers) { online++; if (this.dcOpen(id)) p2p++; }
+    var connected = !!(this.mqtt && this.mqtt.connected);
+    return {
+      guid: this.guid,
+      connected: connected,
+      pureP2P: this.pureP2P,
+      useP2P: this.useP2P,
+      online: connected ? online + 1 : 0,   // 含自己
+      peers: online,
+      p2p: p2p,
+      total: this.messages.length
+    };
+  };
+
+  Room.prototype.dcOpen = function (id) {
+    var dc = this.dcs[id];
+    return !!(dc && dc.readyState === 'open');
+  };
+
+  // ---------------------------------------------------------------- 消息
+  Room.prototype.accept = function (m) {
+    if (!m || !m.id || typeof m.text !== 'string') return false;
+    if (this.seen[m.id]) return false;
+    this.seen[m.id] = 1; this.seenCount++;
+    var rec = {
+      id: m.id, from: String(m.from || '?'), name: String(m.name || T('chat.anon')),
+      ts: Number(m.ts) || Date.now(), text: m.text.slice(0, MAX_TEXT)
+    };
+    this.messages.push(rec);
+    this.messages.sort(function (a, b) { return a.ts - b.ts; });
+    if (this.messages.length > HISTORY_CAP) this.messages.splice(0, this.messages.length - HISTORY_CAP);
+    if (this.seenCount > 4000) this.rebuildSeen();
+    this.emit('msg', rec);
+    return true;
+  };
+
+  Room.prototype.rebuildSeen = function () {
+    this.seen = {}; this.seenCount = 0;
+    for (var i = 0; i < this.messages.length; i++) { this.seen[this.messages[i].id] = 1; this.seenCount++; }
+  };
+
+  Room.prototype.mergeHistory = function (items) {
+    if (!items || !items.length) return false;
+    var fresh = [];
+    for (var i = 0; i < items.length; i++) {
+      var m = items[i];
+      if (!m || !m.id || typeof m.text !== 'string' || this.seen[m.id]) continue;
+      this.seen[m.id] = 1; this.seenCount++;
+      var rec = {
+        id: m.id, from: String(m.from || '?'), name: String(m.name || T('chat.anon')),
+        ts: Number(m.ts) || Date.now(), text: m.text.slice(0, MAX_TEXT)
+      };
+      this.messages.push(rec); fresh.push(rec);
+    }
+    if (!fresh.length) return false;
+    this.messages.sort(function (a, b) { return a.ts - b.ts; });
+    if (this.messages.length > HISTORY_CAP) this.messages.splice(0, this.messages.length - HISTORY_CAP);
+    fresh.sort(function (a, b) { return a.ts - b.ts; });
+    this.emit('history', fresh);
+    this.emit('status', this.status());
+    return true;
+  };
+
+  Room.prototype.send = function (text) {
+    text = String(text == null ? '' : text);
+    if (!text.trim()) return { ok: false, reason: 'empty' };
+    var clipped = false;
+    if (text.length > MAX_TEXT) { text = text.slice(0, MAX_TEXT); clipped = true; }
+
+    var msg = { id: uid(18) + Date.now().toString(36), from: this.id, name: this.name, ts: Date.now(), text: text };
+    this.accept(msg);
+
+    var relayed = false, p2p = 0;
+    if (!this.pureP2P && this.mqtt && this.mqtt.connected) {
+      this.mqtt.publish(this.base + '/m', JSON.stringify(msg));
+      this.scheduleHistoryPublish();
+      relayed = true;
+    } else if (!this.pureP2P) {
+      this.log('warn', T('log.notConnected'));
+    }
+    var payload = JSON.stringify({ t: 'm', m: msg });
+    for (var id in this.dcs) {
+      var dc = this.dcs[id];
+      if (dc && dc.readyState === 'open') {
+        try { dc.send(payload); p2p++; } catch (e) { /* ignore */ }
+      }
+    }
+    if (this.pureP2P && p2p === 0) {
+      this.log('warn', T('log.pureNoPeer'));
+    }
+    return { ok: true, relayed: relayed, p2p: p2p, clipped: clipped, id: msg.id };
+  };
+
+  Room.prototype.scheduleHistoryPublish = function () {
+    if (this.pureP2P) return;
+    var self = this;
+    clearTimeout(this.histTimer);
+    this.histTimer = setTimeout(function () { self.publishHistory(); }, HIST_DEBOUNCE);
+  };
+
+  Room.prototype.publishHistory = function () {
+    if (this.pureP2P || !this.mqtt || !this.mqtt.connected) return;
+    var items = this.messages.slice(-HISTORY_CAP);
+    var payload = JSON.stringify({ v: 1, guid: this.guid, items: items });
+    // 公共节点对单包大小有限制，超了就丢最旧的
+    while (payload.length > 180000 && items.length > 1) {
+      items = items.slice(Math.ceil(items.length / 10));
+      payload = JSON.stringify({ v: 1, guid: this.guid, items: items });
+    }
+    this.mqtt.publish(this.base + '/h', payload, { retain: true });
+  };
+
+  // ---------------------------------------------------------------- WebRTC P2P
+  Room.prototype.sendSignal = function (obj) {
+    if (!this.mqtt || !this.mqtt.connected) return;
+    obj.from = this.id;
+    this.mqtt.publish(this.base + '/s', JSON.stringify(obj));
+  };
+
+  Room.prototype.ensurePeer = function (peerId) {
+    var self = this;
+    if (!this.useP2P) return null;
+    if (this.pcs[peerId]) return this.pcs[peerId];
+    var pc;
+    try { pc = new RTCPeerConnection({ iceServers: ICE_SERVERS }); }
+    catch (e) { this.log('warn', T('log.noWebRTC', { msg: e.message })); return null; }
+
+    this.pcs[peerId] = pc;
+    this.pendingIce[peerId] = [];
+
+    pc.onicecandidate = function (e) {
+      if (e.candidate) {
+        self.sendSignal({ kind: 'ice', to: peerId, data: (e.candidate.toJSON ? e.candidate.toJSON() : e.candidate) });
+      }
+    };
+    pc.onconnectionstatechange = function () {
+      var st = pc.connectionState;
+      if (st === 'failed' || st === 'closed') {
+        self.log('warn', T('log.p2pDown', { state: st }));
+        self.dropPeer(peerId);
+      } else if (st === 'connected') {
+        self.emit('peers', self.peerList());
+      }
+    };
+    pc.ondatachannel = function (e) { self.attachDC(peerId, e.channel); };
+
+    // 双方都会调用 ensurePeer，用 id 大小决定谁发 offer，避免双向 offer 打架
+    if (this.id < peerId) {
+      var dc = pc.createDataChannel('enc', { ordered: true });
+      this.attachDC(peerId, dc);
+      pc.createOffer()
+        .then(function (offer) { return pc.setLocalDescription(offer); })
+        .then(function () {
+          self.sendSignal({ kind: 'offer', to: peerId, data: { type: pc.localDescription.type, sdp: pc.localDescription.sdp } });
+        })
+        .catch(function (e) { self.log('warn', T('log.offerFail', { msg: e.message })); });
+    }
+    return pc;
+  };
+
+  Room.prototype.attachDC = function (peerId, dc) {
+    var self = this;
+    this.dcs[peerId] = dc;
+    dc.onopen = function () {
+      self.log('ok', T('log.p2pUp', { name: self.peers[peerId] ? self.peers[peerId].name : peerId }));
+      if (self.pureP2P) {
+        try { dc.send(JSON.stringify({ t: 'hreq' })); } catch (e) { /* ignore */ }
+      }
+      self.emit('peers', self.peerList());
+      self.emit('status', self.status());
+    };
+    dc.onmessage = function (e) {
+      var d = safeJson(e.data);
+      if (!d) return;
+      if (d.t === 'm') {
+        if (self.accept(d.m) && !self.pureP2P) self.scheduleHistoryPublish();
+      } else if (d.t === 'hreq') {
+        try { dc.send(JSON.stringify({ t: 'hist', items: self.messages.slice(-HISTORY_CAP) })); } catch (err) { /* ignore */ }
+      } else if (d.t === 'hist') {
+        self.mergeHistory(d.items);
+      }
+    };
+    dc.onclose = function () {
+      if (self.dcs[peerId] === dc) delete self.dcs[peerId];
+      self.emit('peers', self.peerList());
+      self.emit('status', self.status());
+    };
+    dc.onerror = function () { /* 静默，走中继 */ };
+  };
+
+  Room.prototype.flushIce = function (peerId) {
+    var self = this, pc = this.pcs[peerId], q = this.pendingIce[peerId] || [];
+    this.pendingIce[peerId] = [];
+    q.forEach(function (c) {
+      try { pc.addIceCandidate(new RTCIceCandidate(c)); } catch (e) { /* ignore */ }
+    });
+  };
+
+  Room.prototype.handleSignal = function (s) {
+    var self = this;
+    if (!this.useP2P) return;
+    var pc;
+    if (s.kind === 'offer') {
+      pc = this.ensurePeer(s.from);
+      if (!pc) return;
+      pc.setRemoteDescription(new RTCSessionDescription(s.data))
+        .then(function () { self.flushIce(s.from); return pc.createAnswer(); })
+        .then(function (ans) { return pc.setLocalDescription(ans); })
+        .then(function () {
+          self.sendSignal({ kind: 'answer', to: s.from, data: { type: pc.localDescription.type, sdp: pc.localDescription.sdp } });
+        })
+        .catch(function (e) { self.log('warn', T('log.handleOfferFail', { msg: e.message })); });
+    } else if (s.kind === 'answer') {
+      pc = this.pcs[s.from];
+      if (!pc) return;
+      if (pc.signalingState === 'have-local-offer') {
+        pc.setRemoteDescription(new RTCSessionDescription(s.data))
+          .then(function () { self.flushIce(s.from); })
+          .catch(function (e) { self.log('warn', T('log.handleAnswerFail', { msg: e.message })); });
+      }
+    } else if (s.kind === 'ice') {
+      pc = this.pcs[s.from];
+      if (!pc) return;
+      if (pc.remoteDescription && pc.remoteDescription.type) {
+        try { pc.addIceCandidate(new RTCIceCandidate(s.data)); } catch (e) { /* ignore */ }
+      } else {
+        (this.pendingIce[s.from] = this.pendingIce[s.from] || []).push(s.data);
+      }
+    }
+  };
+
+  Room.prototype.dropPeer = function (id) {
+    try { if (this.dcs[id]) this.dcs[id].close(); } catch (e) { /* ignore */ }
+    try { if (this.pcs[id]) this.pcs[id].close(); } catch (e2) { /* ignore */ }
+    delete this.dcs[id]; delete this.pcs[id]; delete this.pendingIce[id];
+  };
+
+  Room.prototype.stop = function () {
+    clearInterval(this.presTimer);
+    clearTimeout(this.histTimer);
+    if (this.mqtt && this.mqtt.connected) {
+      this.mqtt.publish(this.base + '/p', JSON.stringify({ t: 'bye', id: this.id, name: this.name }));
+    }
+    for (var id in this.pcs) this.dropPeer(id);
+    if (this.mqtt) this.mqtt.close();
+  };
+
+  function safeJson(s) {
+    try { return JSON.parse(s); } catch (e) { return null; }
+  }
+
+  // ---------------------------------------------------------------- export
+  var ENC = {
+    VERSION: VERSION_STR(),
+    BROKERS: BROKERS,
+    ICE_SERVERS: ICE_SERVERS,
+    HISTORY_CAP: HISTORY_CAP,
+    MAX_TEXT: MAX_TEXT,
+    newGuid: newGuid,
+    uid: uid,
+    sanitizeTopic: sanitizeTopic,
+    MqttClient: MqttClient,
+    Room: Room
+  };
+  function VERSION_STR() { return '1.0.0'; }
+
+  if (typeof globalThis !== 'undefined') globalThis.ENC = ENC;
+  if (typeof module !== 'undefined' && module.exports) module.exports = ENC;
+})();
+
+</script>
+<script>
+/*!
+ * ENC UI —— 连接 / 日志 / 发送 / 分享（中英双语）
+ * ENC UI —— connect / log / send / share (bilingual)
+ */
+(function () {
+  'use strict';
+
+  var $ = function (id) { return document.getElementById(id); };
+  var logEl = $('log'), guidEl = $('guid'), msgEl = $('msg'), nickEl = $('nick'), pureEl = $('pure');
+  var room = null;
+
+  var I18N = (typeof window !== 'undefined' && window.ENC_I18N) ? window.ENC_I18N : null;
+  function t(key, params) { return I18N ? I18N.t(key, params) : key; }
+
+  if (!window.ENC) {
+    logEl.innerHTML = '<div class="row lvl-err">' + t('log.coreMissing') + '</div>';
+    return;
+  }
+
+  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+  function clock(ts) {
+    var d = new Date(ts || Date.now());
+    return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+  }
+  function ls(key, val) {
+    try {
+      if (val === undefined) return localStorage.getItem(key);
+      localStorage.setItem(key, val);
+    } catch (e) { /* file:// 下可能不可用 / may be unavailable on file:// */ }
+    return null;
+  }
+
+  // ------------------------------------------------------------ 日志区 / log area
+  function trim() {
+    while (logEl.childElementCount > 500) logEl.removeChild(logEl.firstElementChild);
+  }
+  function atBottom() { return logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 70; }
+  function scrollDown(force) { if (force || atBottom()) logEl.scrollTop = logEl.scrollHeight; }
+
+  function line(level, nodes, cls) {
+    var stick = atBottom();
+    var row = document.createElement('div');
+    row.className = 'row ' + (cls || '') + (level ? ' lvl-' + level : '');
+    var tspan = document.createElement('span');
+    tspan.className = 't';
+    tspan.textContent = clock();
+    row.appendChild(tspan);
+    (Array.isArray(nodes) ? nodes : [nodes]).forEach(function (n) {
+      if (typeof n === 'string') row.appendChild(document.createTextNode(n));
+      else if (n) row.appendChild(n);
+    });
+    logEl.appendChild(row);
+    trim();
+    scrollDown(stick);
+    return row;
+  }
+  function sys(level, text) { return line(level, text); }
+
+  function guidLine(level, prefix, guid) {
+    var g = document.createElement('span');
+    g.id = 'guidTag';
+    g.textContent = guid;
+    var b = document.createElement('button');
+    b.className = 'ghost';
+    b.setAttribute('data-i18n', 'btn.copyGuid');
+    b.textContent = t('btn.copyGuid');
+    b.style.marginLeft = '10px';
+    b.style.padding = '2px 8px';
+    b.style.fontSize = '11px';
+    b.onclick = function () { copy(guid, b); };
+    return line(level, [prefix, g, b]);
+  }
+
+  function chatLine(m) {
+    var mine = room && m.from === room.id;
+    var stick = atBottom();
+    var row = document.createElement('div');
+    row.className = 'row chat' + (mine ? ' me' : '');
+
+    var tm = document.createElement('span');
+    tm.className = 't';
+    tm.textContent = clock(m.ts);
+    var who = document.createElement('span');
+    who.className = 'who';
+    who.textContent = (mine ? t('chat.me') : (m.name || t('chat.anon'))) + '：';
+    var tx = document.createElement('span');
+    tx.className = 'tx';
+    tx.textContent = m.text;
+
+    row.appendChild(tm); row.appendChild(who); row.appendChild(tx);
+    logEl.appendChild(row);
+    trim();
+    scrollDown(stick);
+    return row;
+  }
+
+  // ------------------------------------------------------------ 状态 / status
+  function setPill(state, text) {
+    $('pill').className = state || '';
+    $('pillText').textContent = text;
+  }
+  function refreshStatus(st) {
+    if (!st) { setPill('', t('status.off')); return; }
+    if (!st.connected) { setPill('wait', t('status.connecting', { n: st.online })); return; }
+    var mode = t(st.pureP2P ? 'status.on.pure' : 'status.on.relay', { n: st.online });
+    var p2p = st.useP2P ? t('status.p2p', { a: st.p2p, b: st.peers }) : '';
+    setPill('on', mode + p2p);
+  }
+
+  function setShare(url) {
+    var el = $('shareUrl');
+    if (!url) {
+      el.className = 'url off';
+      el.textContent = t('share.none');
+      $('btnCopy').disabled = true;
+      return;
+    }
+    el.className = 'url';
+    el.textContent = url;
+    $('btnCopy').disabled = false;
+  }
+
+  function copy(text, btn) {
+    var done = function () {
+      if (!btn) return;
+      var key = btn.getAttribute('data-i18n');
+      var old = key ? t(key) : (btn.getAttribute('data-label') || btn.textContent);
+      btn.setAttribute('data-label', old);
+      btn.textContent = t('btn.copied');
+      setTimeout(function () { btn.textContent = old; }, 1200);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { fallback(); });
+    } else fallback();
+    function fallback() {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); done(); } catch (e) { sys('warn', t('log.copyFail')); }
+      document.body.removeChild(ta);
+    }
+  }
+
+  // ------------------------------------------------------------ 连接 / connect
+  function extractGuid(v) {
+    var m = String(v).match(/[?&]guid=([^&#\s]+)/i);
+    if (m) { try { return decodeURIComponent(m[1]); } catch (e) { return m[1]; } }
+    return String(v).trim();
+  }
+
+  function wire(r) {
+    r.on('log', function (l) { sys(l.level, l.text); });
+    r.on('status', refreshStatus);
+    r.on('peers', function () { refreshStatus(r.status()); });
+    r.on('msg', function (m) { chatLine(m); });
+    r.on('history', function (items) {
+      sys('info', t('log.replay', { n: items.length, cap: ENC.HISTORY_CAP }));
+      items.forEach(function (m) { chatLine(m); });
+      refreshStatus(r.status());
+    });
+    r.on('nohistory', function () { sys('info', t('log.noHistory')); });
+  }
+
+  function doConnect() {
+    var raw = guidEl.value.trim();
+    var isNew = (raw === '');
+    var guid = isNew ? ENC.newGuid() : extractGuid(raw);
+    guidEl.value = guid;
+
+    if (room) { try { room.stop(); } catch (e) { /* ignore */ } room = null; }
+
+    var pure = pureEl.checked;
+    var nick = (nickEl.value || '').trim() || (t('chat.user') + ENC.uid(4));
+    nickEl.value = nick;
+    ls('enc.nick', nick);
+    ls('enc.broker', $('broker').value);
+
+    sys('info', '────────────────────────────────────────────');
+    sys('ok', isNew ? t('log.newRoom') : t('log.joinRoom', { guid: guid }));
+    sys('info', t(pure ? 'log.modePure' : 'log.modeHybrid'));
+
+    room = new ENC.Room({
+      guid: guid,
+      broker: $('broker').value,
+      name: nick,
+      pureP2P: pure
+    });
+    wire(room);
+
+    var me = room;
+    window.__encRoom = me;          // 便于调试/自动化检查 · debug & automation hook
+    me.start();
+
+    // 连上后打印成功信息 + GUID + 分享链接 / announce once connected
+    var announced = false;
+    var iv = setInterval(function () {
+      if (announced || me !== room) { clearInterval(iv); return; }
+      if (me.mqtt && me.mqtt.connected) {
+        announced = true;
+        clearInterval(iv);
+        sys('ok', t(isNew ? 'log.created' : 'log.joined'));
+        guidLine('ok', '', guid);
+        var url = me.shareUrl(location.href);
+        setShare(url);
+        sys('info', t('log.shareIs'));
+        line('info', url);
+        sys('info', t('log.shareHelp'));
+        if (location.protocol === 'file:') sys('warn', t('log.fileWarning'));
+        $('msg').disabled = false;
+        $('btnSend').disabled = false;
+        $('btnStop').disabled = false;
+        msgEl.focus();
+        refreshStatus(me.status());
+      }
+    }, 150);
+    setTimeout(function () { clearInterval(iv); }, 60000);
+
+    setShare(null);
+    $('msg').disabled = true;
+    $('btnSend').disabled = true;
+    $('btnStop').disabled = false;
+  }
+
+  function doStop(silent) {
+    if (room) {
+      try { room.stop(); } catch (e) { /* ignore */ }
+      room = null;
+      window.__encRoom = null;
+      if (!silent) sys('warn', t('log.disconnected'));
+    }
+    setPill('', t('status.off'));
+    setShare(null);
+    $('msg').disabled = true;
+    $('btnSend').disabled = true;
+    $('btnStop').disabled = true;
+  }
+
+  function doSend() {
+    if (!room) { sys('warn', t('log.needConnect')); return; }
+    var text = msgEl.value;
+    if (!text.trim()) { msgEl.focus(); return; }
+    var res = room.send(text);
+    if (res && res.ok) {
+      msgEl.value = '';
+      if (res.clipped) sys('warn', t('log.tooLong', { n: ENC.MAX_TEXT }));
+    }
+  }
+
+  // ------------------------------------------------------------ 语言 / language
+  function markLang(lang) {
+    Array.prototype.forEach.call(document.querySelectorAll('#langSwitch button'), function (b) {
+      b.classList.toggle('active', b.getAttribute('data-lang') === lang);
+    });
+  }
+  function switchLang(lang, announce) {
+    if (!I18N) return;
+    I18N.setLang(lang, true);
+    markLang(lang);
+    sys('info', t(lang === 'zh' ? 'log.langZh' : 'log.langEn'));
+    if (room) {
+      refreshStatus(room.status());
+      if (!room.mqtt || !room.mqtt.connected) setShare(null);
+      else setShare(room.shareUrl(location.href));
+    } else {
+      setPill('', t('status.off'));
+      setShare(null);
+    }
+  }
+
+  // ------------------------------------------------------------ 初始化 / init
+  (function init() {
+    if (I18N) I18N.apply();
+    markLang(I18N ? I18N.getLang() : 'zh');
+
+    ENC.BROKERS.forEach(function (b) {
+      var o = document.createElement('option');
+      o.value = b.url;
+      o.textContent = I18N ? t('broker.' + b.id) : b.label;
+      o.setAttribute('data-broker-id', b.id);
+      $('broker').appendChild(o);
+    });
+    var savedBroker = ls('enc.broker');
+    if (savedBroker && ENC.BROKERS.some(function (b) { return b.url === savedBroker; })) {
+      $('broker').value = savedBroker;
+    }
+    nickEl.value = ls('enc.nick') || (t('chat.user') + ENC.uid(4));
+
+    setShare(null);
+    setPill('', t('status.off'));
+
+    if (typeof RTCPeerConnection === 'undefined') sys('warn', t('log.noRTC'));
+
+    sys('info', t('log.ready', { v: ENC.VERSION }));
+    sys('info', t('log.tip1'));
+    sys('info', t('log.tip2'));
+
+    var q = new URLSearchParams(location.search).get('guid');
+    if (q) {
+      guidEl.value = q;
+      sys('ok', t('log.autoJoin', { g: q }));
+      setTimeout(doConnect, 200);
+    }
+  })();
+
+  $('btnConnect').onclick = doConnect;
+  $('btnStop').onclick = function () { doStop(false); };
+  $('btnSend').onclick = doSend;
+  $('btnClear').onclick = function () { logEl.innerHTML = ''; sys('info', t('log.cleared')); };
+  $('btnCopy').onclick = function () { if (room) copy(room.shareUrl(location.href), $('btnCopy')); };
+  pureEl.onchange = function () { sys(this.checked ? 'warn' : 'info', t(this.checked ? 'log.pureOn' : 'log.pureOff')); };
+  guidEl.addEventListener('keydown', function (e) { if (e.key === 'Enter') doConnect(); });
+  msgEl.addEventListener('keydown', function (e) { if (e.key === 'Enter') doSend(); });
+
+  Array.prototype.forEach.call(document.querySelectorAll('#langSwitch button'), function (b) {
+    b.onclick = function () { switchLang(b.getAttribute('data-lang')); };
+  });
+})();
+
+</script>
+</body>
+</html>
