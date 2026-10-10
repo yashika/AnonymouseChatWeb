@@ -121,6 +121,10 @@ cd AnonymouseChatWeb
 昵称同时写进 `localStorage` **和** cookie，所以只清掉其中一个并不会丢。
 本地只保存昵称和你选的公共节点，不保存任何消息内容或身份标识。
 
+<p align="center">
+  <img src="docs/screenshot-nickname.png" width="700" alt="新设备首次打开自动生成并记住昵称">
+</p>
+
 ---
 
 ## 语言切换

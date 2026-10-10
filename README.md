@@ -128,6 +128,10 @@ The nickname box is bound to the **browser/device**, not to the room:
 It is written to `localStorage` **and** to a cookie, so clearing just one of them is not enough to
 lose it. Only the nickname and the chosen public node are stored — no message content, no identifiers.
 
+<p align="center">
+  <img src="docs/screenshot-nickname.png" width="700" alt="Nickname generated on first visit and remembered">
+</p>
+
 ---
 
 ## Language / 语言
