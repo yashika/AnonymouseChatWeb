@@ -1,6 +1,7 @@
-/* 通过 Chrome DevTools Protocol 在真实浏览器里端到端验证 encnetchat.html */
+/* 通过 Chrome DevTools Protocol 在真实浏览器里端到端验证 index.html */
 const BASE = 'http://127.0.0.1:9222';
-const FILE_URL = 'file:///D:/prjs/encNetChat/index.html';
+// APP_URL 可指向线上地址，例如 APP_URL=https://user.github.io/repo/
+const FILE_URL = process.env.APP_URL || 'file:///D:/prjs/encNetChat/index.html';
 
 let failures = 0;
 const check = (name, cond, extra = '') => {
